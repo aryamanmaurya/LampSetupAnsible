@@ -1,0 +1,110 @@
+---
+- name: Setup LAMP stack with WordPress on CentOS/RHEL
+  hosts: all
+  become: yes
+
+  vars:
+    httpd_conf_dir: /etc/httpd/conf.d
+    document_root: /var/www/lamp-stack
+    wordpress_dir: /var/www/lamp-stack/wordpress
+    http_port: 4444
+
+  tasks:
+
+    - name: Install Apache, PHP, and MariaDB
+      yum:
+        name:
+          - httpd
+          - php
+          - php-mysqlnd
+          - mariadb-server
+        state: present
+
+    - name: Start and enable Apache and MariaDB services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - httpd
+        - mariadb
+
+    - name: Create document root directory
+      file:
+        path: "{{ document_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create index.html with background and heading
+      copy:
+        dest: "{{ document_root }}/index.html"
+        content: |
+          <html>
+          <head>
+              <style>
+                  body {
+                      background-color: lightblue;
+                      text-align: center;
+                  }
+              </style>
+          </head>
+          <body>
+              <h1>Welcome to My LAMP Stack</h1>
+          </body>
+          </html>
+
+    - name: Create a.php file for php
+      copy:
+        dest: "{{ document_root }}/a.php"
+        content: |
+          <?php
+           phpinfo();
+           ?>
+
+    - name: Download and extract WordPress
+      unarchive:
+        src: https://wordpress.org/latest.tar.gz
+        dest: "{{ document_root }}/wordpress"
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+        creates: "{{ wordpress_dir }}"
+
+    - name: Configure Apache to serve LAMP site and WordPress
+      copy:
+        dest: "{{ httpd_conf_dir }}/lamp-stack.conf"
+        content: |
+          Listen {{ http_port }}
+          <VirtualHost *:{{ http_port }}>
+              DocumentRoot "{{ document_root }}"
+              <Directory "{{ document_root }}">
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              ErrorLog logs/lamp-stack-error.log
+              CustomLog logs/lamp-stack-access.log combined
+          </VirtualHost>
+
+
+    - name: Set proper ownership for the document root
+      file:
+        path: "{{ document_root }}"
+        state: directory
+        owner: apache
+        group: apache
+        recurse: yes
+
+    - name: Open port {{ http_port }} in the firewall
+      firewalld:
+        port: "{{ http_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Relabel port {{ http_port }} for SELinux
+      command: "semanage port -a -t http_port_t -p tcp {{ http_port }}"
+      ignore_errors: yes
+
+    - name: Restart Apache to apply changes
+      systemd:
+        name: httpd
+        state: restarted
